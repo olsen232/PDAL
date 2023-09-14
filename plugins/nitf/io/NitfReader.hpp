@@ -37,6 +37,7 @@
 #include <fstream>
 
 #include <io/LasReader.hpp>
+#include <io/private/ReaderInput.hpp>
 #include <pdal/StageFactory.hpp>
 #include <pdal/util/FileUtils.hpp>
 #include <arbiter/arbiter.hpp>
@@ -121,10 +122,10 @@ class PDAL_DLL NitfReader : public LasReader
     };
     using ShiftStream = basic_ShiftStream<char>;
 
-    class NitfStreamIf : public LasStreamIf
+    class NitfReaderInput : public ReaderInput
     {
     public:
-        NitfStreamIf(const std::string& filename, ShiftStream::off_type off)
+        NitfReaderInput(const std::string& filename, ShiftStream::off_type off)
         {
             m_istream = new ShiftStream(filename, off);
             // This makes sure that the stream is positioned at the beginning
@@ -132,12 +133,9 @@ class PDAL_DLL NitfReader : public LasReader
             m_istream->seekg(0);
         }
 
-        virtual ~NitfStreamIf()
+        virtual ~NitfReaderInput()
         {
             delete m_istream;
-
-            // Important - Otherwise the base class will attempt to use in dtor.
-            m_istream = nullptr;
         }
     };
 
@@ -153,8 +151,8 @@ protected:
     virtual void createStream()
     {
 
-        if (!m_streamIf)
-            m_streamIf.reset(new NitfStreamIf(m_filename, m_offset));
+        if (!m_input)
+            m_input.reset(new NitfReaderInput(m_filename, m_offset));
     }
 
 private:

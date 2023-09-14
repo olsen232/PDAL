@@ -47,41 +47,23 @@ namespace pdal
 
 namespace las
 {
-    struct Header;
-    struct Vlr;
-    using VlrList = std::vector<Vlr>;
-};
+struct Header;
+struct Vlr;
+using VlrList = std::vector<Vlr>;
+}
 
 class NitfReader;
 class LeExtractor;
 class PointDimensions;
 class LazPerfVlrDecompressor;
 class LasHeader;
+class ReaderInput;
 
 class PDAL_DLL LasReader : public Reader, public Streamable
 {
     friend class LasTester;
 
 protected:
-    class LasStreamIf
-    {
-    protected:
-        LasStreamIf()
-        {}
-
-    public:
-        LasStreamIf(const std::string& filename)
-            { m_istream = Utils::openFile(filename); }
-
-        virtual ~LasStreamIf()
-        {
-            if (m_istream)
-                Utils::closeFile(m_istream);
-        }
-
-        std::istream *m_istream;
-    };
-
     friend class NitfReader;
 public:
     LasReader();
@@ -97,8 +79,9 @@ public:
 
 protected:
     virtual void createStream();
+    virtual void createRangeStream();
 
-    std::unique_ptr<LasStreamIf> m_streamIf;
+    std::unique_ptr<ReaderInput> m_input;
 
 private:
     virtual void addArgs(ProgramArgs& args);

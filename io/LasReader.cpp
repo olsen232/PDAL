@@ -40,6 +40,7 @@
 #include "private/las/Srs.hpp"
 #include "private/las/Utils.hpp"
 #include "private/las/Vlr.hpp"
+#include "private/ReaderInput.hpp"
 
 #include <sstream>
 #include <string.h>
@@ -168,6 +169,8 @@ QuickInfo LasReader::inspect()
     QuickInfo qi;
     std::unique_ptr<PointLayout> layout(new PointLayout());
 
+    createRangeStream();
+
     RowPointTable table;
     initialize(table);
     addDimensions(layout.get());
@@ -183,6 +186,7 @@ QuickInfo LasReader::inspect()
     qi.m_metadata = m_metadata;
 
     done(table);
+    m_input.reset();
 
     return qi;
 }
@@ -190,10 +194,30 @@ QuickInfo LasReader::inspect()
 
 void LasReader::createStream()
 {
-    if (!m_streamIf)
-        m_streamIf.reset(new LasStreamIf(m_filename));
+    if (m_count == 0)
+    {
+        createRangeStream();
+        return;
+    }
 
-    if (!m_streamIf->m_istream)
+    if (!m_input)
+        m_input.reset(new LocalFileReaderInput(m_filename));
+
+    if (!m_input->m_istream)
+    {
+        std::ostringstream oss;
+        oss << "Unable to open stream for '"
+            << m_filename <<"' with error '" << strerror(errno) <<"'";
+        throw pdal_error(oss.str());
+    }
+}
+
+void LasReader::createRangeStream()
+{
+    if (!m_input)
+        m_input.reset(new BufferedRangeReaderInput(m_filename));
+
+    if (!m_input->m_istream)
     {
         std::ostringstream oss;
         oss << "Unable to open stream for '"
@@ -220,8 +244,10 @@ void LasReader::initializeLocal(PointTableRef table, MetadataNode& m)
         throwError(error);
 
     createStream();
-    std::istream *stream(m_streamIf->m_istream);
+    std::istream *stream(m_input->m_istream);
 
+    static const int INITIAL_RANGE_LENGTH = 2048;
+    m_input->prepareRangeForReading(0, INITIAL_RANGE_LENGTH);
     stream->seekg(0);
     // Always try to read as if we have 1.4 size.
     char headerBuf[las::Header::Size14];
@@ -253,6 +279,8 @@ void LasReader::initializeLocal(PointTableRef table, MetadataNode& m)
     // Clear the error state since the seek or read above may have failed but the file could
     // still be fine.
     stream->clear();
+
+    m_input->prepareRangeForReading(0, d->header.pointOffset);
     stream->seekg(d->header.headerSize);
 
     char vlrHeaderBuf[las::Vlr::HeaderSize];
@@ -286,6 +314,7 @@ void LasReader::initializeLocal(PointTableRef table, MetadataNode& m)
     if (d->header.evlrOffset && d->header.evlrCount)
     {
         char evlrHeaderBuf[las::Evlr::HeaderSize];
+        m_input->prepareRangeForReading(d->header.evlrOffset, fileSize - d->header.evlrOffset);
         stream->seekg(d->header.evlrOffset);
         for (uint32_t i = 0; i < d->header.evlrCount; ++i)
         {
@@ -336,11 +365,13 @@ void LasReader::initializeLocal(PointTableRef table, MetadataNode& m)
 
 }
 
-
 void LasReader::ready(PointTableRef table)
 {
+    if (m_count == 0)
+        return;
+
     createStream();
-    std::istream *stream(m_streamIf->m_istream);
+    std::istream *stream(m_input->m_istream);
 
     d->index = 0;
     if (d->header.dataCompressed())
@@ -437,7 +468,7 @@ bool LasReader::processOne(PointRef& point)
     else
     {
         std::vector<char> buf(d->header.pointSize);
-        m_streamIf->m_istream->read(buf.data(), buf.size());
+        m_input->m_istream->read(buf.data(), buf.size());
         loadPoint(point, buf.data(), buf.size());
     }
     d->index++;
@@ -499,7 +530,7 @@ point_count_t LasReader::read(PointViewPtr view, point_count_t count)
 
 point_count_t LasReader::readFileBlock(std::vector<char>& buf, point_count_t maxpoints)
 {
-    std::istream *stream(m_streamIf->m_istream);
+    std::istream *stream(m_input->m_istream);
 
     size_t ptLen = d->header.pointSize;
     point_count_t blockpoints = buf.size() / ptLen;
@@ -713,7 +744,7 @@ void LasReader::loadExtraDims(LeExtractor& istream, PointRef& point)
 
 void LasReader::done(PointTableRef)
 {
-    m_streamIf.reset();
+    m_input.reset();
 }
 
 bool LasReader::eof()
